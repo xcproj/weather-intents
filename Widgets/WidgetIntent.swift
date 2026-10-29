@@ -26,7 +26,7 @@ struct PlaceWidgetIntent: WidgetConfigurationIntent {
     static var description = IntentDescription("Pick the place and what the widget shows.")
 
     @Parameter(title: "Place", description: "Leave empty for where you are") var place: PlaceEntity?
-    @Parameter(title: "Show", default: .hours) var show: WidgetShow
+    @Parameter(title: "Show", default: .now) var show: WidgetShow
 
     init() {}
 

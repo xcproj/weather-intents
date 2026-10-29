@@ -73,7 +73,7 @@ jobs:
           }
           struct HostWidget: Widget {
               var body: some WidgetConfiguration {
-                  AppIntentConfiguration(kind: "weather.place", intent: PlaceWidgetIntent.self, provider: HostProvider()) { _ in Text("") }
+                  AppIntentConfiguration(kind: "weather.now", intent: PlaceWidgetIntent.self, provider: HostProvider()) { _ in Text("") }
               }
           }
           @main struct HostWidgets: WidgetBundle { var body: some Widget { HostWidget() } }
