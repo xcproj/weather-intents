@@ -1,10 +1,10 @@
 # Makes omuo weather's App Intents metadata (Metadata.appintents: what Siri, Shortcuts, Spotlight and the widgets'
 # settings read to know its actions and options) with Xcode, on one of GitHub's Macs. Only Xcode's build makes that
-# metadata, and xtool doesn't run that step. The intents' code is the app's ios/Sources/WeatherIntents, copied here by
-# scripts/intents.sh, and built in small throwaway apps whose module is also called WeatherIntents, so the metadata
-# names the same types the real app and widgets have:
-#   app/      every intent, with the App Shortcuts (Siri's phrases): bundled in the app
-#   widgets/  the place and the widget's settings only: bundled in the widget extension
+# metadata, and xtool doesn't run that step. The code is the app's own, copied here by scripts/intents.sh, built so
+# each metadata names the same module and types the real app and widgets have:
+#   app/      Siri and Shortcuts: Intents/, in a throwaway app whose module is WeatherIntents
+#   widgets/  the Weather widget's settings: Widgets/, in a real widget extension (module WeatherWidgets) inside a
+#             throwaway app, as Xcode makes it for a widget
 # The results are the "metadata" artifact, which scripts/intents.sh downloads into ios/Resources/Intents/.
 name: App Intents metadata
 
@@ -22,22 +22,18 @@ jobs:
       - name: Xcode in use
         run: xcodebuild -version
 
-      - name: Two small apps around the intents
+      - name: The throwaway apps
         run: |
           set -euo pipefail
           brew install xcodegen
-          for kind in app widgets; do
-            rm -rf "build/$kind" && mkdir -p "build/$kind/Sources"
-            if [ "$kind" = app ]; then
-              cp Intents/*.swift "build/$kind/Sources/"
-            else
-              cp Intents/Places.swift Intents/WidgetIntent.swift "build/$kind/Sources/"
-            fi
-            cat > "build/$kind/Sources/HostApp.swift" <<'EOF'
+          # Siri and Shortcuts: an app whose module is the intents'
+          rm -rf build && mkdir -p build/app/Sources build/widgets/App build/widgets/Extension
+          cp Intents/*.swift build/app/Sources/
+          cat > build/app/Sources/HostApp.swift <<'EOF'
           import SwiftUI
           @main struct HostApp: App { var body: some Scene { WindowGroup { Text("omuo weather") } } }
           EOF
-            cat > "build/$kind/project.yml" <<EOF
+          cat > build/app/project.yml <<'EOF'
           name: IntentsHost
           options:
             deploymentTarget:
@@ -64,22 +60,90 @@ jobs:
                   CODE_SIGNING_ALLOWED: NO
                   TARGETED_DEVICE_FAMILY: "1"
           EOF
-            (cd "build/$kind" && xcodegen generate)
-          done
+          # the widget's settings: a real widget extension, module WeatherWidgets, in an app
+          cp Widgets/*.swift build/widgets/Extension/
+          cat > build/widgets/Extension/HostWidgets.swift <<'EOF'
+          import SwiftUI
+          import WidgetKit
+          struct HostEntry: TimelineEntry { let date: Date }
+          struct HostProvider: AppIntentTimelineProvider {
+              func placeholder(in context: Context) -> HostEntry { HostEntry(date: Date()) }
+              func snapshot(for configuration: PlaceWidgetIntent, in context: Context) async -> HostEntry { HostEntry(date: Date()) }
+              func timeline(for configuration: PlaceWidgetIntent, in context: Context) async -> Timeline<HostEntry> { Timeline(entries: [HostEntry(date: Date())], policy: .never) }
+          }
+          struct HostWidget: Widget {
+              var body: some WidgetConfiguration {
+                  AppIntentConfiguration(kind: "weather.place", intent: PlaceWidgetIntent.self, provider: HostProvider()) { _ in Text("") }
+              }
+          }
+          @main struct HostWidgets: WidgetBundle { var body: some Widget { HostWidget() } }
+          EOF
+          cat > build/widgets/App/HostApp.swift <<'EOF'
+          import SwiftUI
+          @main struct HostApp: App { var body: some Scene { WindowGroup { Text("omuo weather") } } }
+          EOF
+          cat > build/widgets/project.yml <<'EOF'
+          name: WidgetsHost
+          options:
+            deploymentTarget:
+              iOS: "17.0"
+          packages:
+            Shared:
+              path: ../../Shared
+          targets:
+            WidgetsHost:
+              type: application
+              platform: iOS
+              sources: [App]
+              dependencies:
+                - target: WeatherWidgets
+              settings:
+                base:
+                  PRODUCT_NAME: WidgetsHost
+                  PRODUCT_BUNDLE_IDENTIFIER: nyc.nikola.weather
+                  GENERATE_INFOPLIST_FILE: YES
+                  INFOPLIST_KEY_CFBundleDisplayName: omuo weather
+                  SWIFT_VERSION: "5.0"
+                  CODE_SIGNING_ALLOWED: NO
+                  TARGETED_DEVICE_FAMILY: "1"
+            WeatherWidgets:
+              type: app-extension
+              platform: iOS
+              sources: [Extension]
+              dependencies:
+                - package: Shared
+                  product: WeatherShared
+              info:
+                path: Extension/Info.plist
+                properties:
+                  CFBundleDisplayName: omuo weather
+                  NSExtension:
+                    NSExtensionPointIdentifier: com.apple.widgetkit-extension
+              settings:
+                base:
+                  PRODUCT_NAME: WeatherWidgets
+                  PRODUCT_MODULE_NAME: WeatherWidgets
+                  PRODUCT_BUNDLE_IDENTIFIER: nyc.nikola.weather.widgets
+                  SWIFT_VERSION: "5.0"
+                  CODE_SIGNING_ALLOWED: NO
+                  TARGETED_DEVICE_FAMILY: "1"
+          EOF
+          (cd build/app && xcodegen generate)
+          (cd build/widgets && xcodegen generate)
 
       - name: Build them (Xcode makes the metadata as it does)
         run: |
           set -euo pipefail
-          mkdir -p out
-          for kind in app widgets; do
-            (cd "build/$kind" && xcodebuild -project IntentsHost.xcodeproj -scheme IntentsHost -configuration Release \
-              -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO SYMROOT="$PWD/products" build | tail -30)
-            app="build/$kind/products/Release-iphoneos/IntentsHost.app"
-            test -d "$app/Metadata.appintents"
-            mkdir -p "out/$kind"
-            cp -R "$app/Metadata.appintents" "out/$kind/"
-            ls -la "out/$kind/Metadata.appintents"
-          done
+          mkdir -p out/app out/widgets
+          (cd build/app && xcodebuild -project IntentsHost.xcodeproj -scheme IntentsHost -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO SYMROOT="$PWD/products" build | tail -25)
+          cp -R build/app/products/Release-iphoneos/IntentsHost.app/Metadata.appintents out/app/
+          (cd build/widgets && xcodebuild -project WidgetsHost.xcodeproj -scheme WidgetsHost -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' CODE_SIGNING_ALLOWED=NO SYMROOT="$PWD/products" build | tail -25)
+          appex=build/widgets/products/Release-iphoneos/WidgetsHost.app/PlugIns/WeatherWidgets.appex
+          ls -la "$appex"
+          cp -R "$appex/Metadata.appintents" out/widgets/
+          ls -la out/app/Metadata.appintents out/widgets/Metadata.appintents
           xcodebuild -version | head -1 > out/XCODE.txt
 
       - uses: actions/upload-artifact@v4

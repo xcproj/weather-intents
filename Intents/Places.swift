@@ -2,12 +2,12 @@ import AppIntents
 import Foundation
 import WeatherShared
 
-/// What Siri, Shortcuts and the widgets' settings know of omuo weather: its places, and how to answer about them, all
+/// What Siri and Shortcuts know of omuo weather: its places, and how to answer about them, all
 /// from what the app last wrote for the widgets (WidgetSnapshot), so asking costs no forecast call. Its metadata
 /// (Metadata.appintents, which Siri and Shortcuts read) is made by Xcode on a GitHub Mac, from these same files, in
-/// the private repo xcproj/weather-intents (scripts/intents.sh)
+/// the public repo xcproj/weather-intents (scripts/intents.sh)
 
-/// A place, as Shortcuts and the widgets' settings see it
+/// A place, as Siri and Shortcuts see it
 public struct PlaceEntity: AppEntity {
     public static var typeDisplayRepresentation: TypeDisplayRepresentation { "Place" }
     public static var defaultQuery: PlaceQuery { PlaceQuery() }
@@ -42,13 +42,6 @@ public struct PlaceQuery: EntityQuery {
     public func defaultResult() async -> PlaceEntity? { Self.all().first }
 
     static func all() -> [PlaceEntity] { (WidgetSnapshot.load()?.places ?? []).map(PlaceEntity.init) }
-}
-
-extension WidgetSnapshot {
-    /// a place by its key, or the first (where you are)
-    public func place(_ key: String?) -> WidgetPlace? {
-        key.flatMap { k in places.first { $0.key == k } } ?? places.first
-    }
 }
 
 /// How an intent reaches the app (this module can't see it): set as soon as the app starts

@@ -8,10 +8,13 @@ import Foundation
 public struct WidgetSnapshot: Codable, Sendable {
     public var places: [WidgetPlace]
     public var fahrenheit: Bool
+    /// the wind's unit, as the app shows it: "kmh", "mph" or "ms"
+    public var speed: String? = nil
 
-    public init(places: [WidgetPlace], fahrenheit: Bool) {
+    public init(places: [WidgetPlace], fahrenheit: Bool, speed: String? = nil) {
         self.places = places
         self.fahrenheit = fahrenheit
+        self.speed = speed
     }
 
     public static let group = "group.nyc.nikola.weather"
@@ -38,6 +41,20 @@ public struct WidgetSnapshot: Codable, Sendable {
     }
 
     public func t(_ c: Double) -> String { "\(Int((fahrenheit ? c * 9 / 5 + 32 : c).rounded()))°" }
+
+    /// a wind speed (km/h) in the app's unit: the number, and the unit's name
+    public func wind(_ kmh: Double) -> (String, String) {
+        switch speed {
+        case "mph": ("\(Int((kmh / 1.609).rounded()))", "mph")
+        case "ms": ("\(Int((kmh / 3.6).rounded()))", "m/s")
+        default: ("\(Int(kmh.rounded()))", "km/h")
+        }
+    }
+
+    /// a place by its key, or the first (where you are)
+    public func place(_ key: String?) -> WidgetPlace? {
+        key.flatMap { k in places.first { $0.key == k } } ?? places.first
+    }
 }
 
 public struct WidgetPlace: Codable, Sendable, Identifiable {
@@ -73,16 +90,30 @@ public struct WidgetPlace: Codable, Sendable, Identifiable {
     public var sunset: Date? = nil
     /// the next days (the large widget)
     public var days: [WidgetDay] = []
+    /// now, for the lock screen's widgets: the UV index (and today's highest), the wind (km/h) and where it's from
+    /// (degrees), the US air quality index, and today's rain or snow (mm of water)
+    public var uv: Double? = nil
+    public var uvMax: Double? = nil
+    public var wind: Double? = nil
+    public var gust: Double? = nil
+    public var windFrom: Double? = nil
+    public var aqi: Int? = nil
+    public var mmToday: Double? = nil
+    public var snowToday: Double? = nil
 
     public init(name: String, lat: Double, lon: Double, timeZone: String, isHere: Bool, fetched: Date, temp: Double, feels: Double,
                 high: Double, low: Double, code: Int, isDay: Bool, condition: String, headline: String, rain: String?, alert: String?,
                 hours: [WidgetHour], top: UInt32, bottom: UInt32, mood: String = "day", time: String = "day",
-                sunrise: Date? = nil, sunset: Date? = nil, days: [WidgetDay] = []) {
+                sunrise: Date? = nil, sunset: Date? = nil, days: [WidgetDay] = [],
+                uv: Double? = nil, uvMax: Double? = nil, wind: Double? = nil, gust: Double? = nil, windFrom: Double? = nil,
+                aqi: Int? = nil, mmToday: Double? = nil, snowToday: Double? = nil) {
         self.name = name; self.lat = lat; self.lon = lon; self.timeZone = timeZone; self.isHere = isHere; self.fetched = fetched
         self.temp = temp; self.feels = feels; self.high = high; self.low = low; self.code = code; self.isDay = isDay
         self.condition = condition; self.headline = headline; self.rain = rain; self.alert = alert; self.hours = hours
         self.top = top; self.bottom = bottom; self.mood = mood; self.time = time; self.sunrise = sunrise; self.sunset = sunset
         self.days = days
+        self.uv = uv; self.uvMax = uvMax; self.wind = wind; self.gust = gust; self.windFrom = windFrom
+        self.aqi = aqi; self.mmToday = mmToday; self.snowToday = snowToday
     }
 
     /// how far through the daylight it is at a moment (0 sunrise, 1 sunset), for the sun's place
@@ -157,7 +188,7 @@ public func symbol(_ code: Int, day: Bool) -> String {
 public enum WidgetFetch {
     public static func refresh(_ p: WidgetPlace) async -> WidgetPlace? {
         let lat = (p.lat * 100).rounded() / 100, lon = (p.lon * 100).rounded() / 100
-        guard let url = URL(string: "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,apparent_temperature,weather_code,is_day&hourly=temperature_2m,weather_code,precipitation_probability&daily=temperature_2m_max,temperature_2m_min&forecast_hours=12&forecast_days=1&timeformat=unixtime&timezone=auto") else { return nil }
+        guard let url = URL(string: "https://api.open-meteo.com/v1/forecast?latitude=\(lat)&longitude=\(lon)&current=temperature_2m,apparent_temperature,weather_code,is_day,uv_index,wind_speed_10m,wind_gusts_10m,wind_direction_10m&hourly=temperature_2m,weather_code,precipitation_probability&daily=temperature_2m_max,temperature_2m_min&forecast_hours=12&forecast_days=1&timeformat=unixtime&timezone=auto") else { return nil }
         var r = URLRequest(url: url)
         r.setValue("omuo-weather-widgets github.com/xcproj/weather-icon", forHTTPHeaderField: "User-Agent")
         r.timeoutInterval = 12
@@ -171,6 +202,10 @@ public enum WidgetFetch {
         out.feels = num(cur["apparent_temperature"]) ?? p.feels
         out.code = Int(num(cur["weather_code"]) ?? Double(p.code))
         out.isDay = (num(cur["is_day"]) ?? 1) == 1
+        out.uv = num(cur["uv_index"]) ?? p.uv
+        out.wind = num(cur["wind_speed_10m"]) ?? p.wind
+        out.gust = num(cur["wind_gusts_10m"]) ?? p.gust
+        out.windFrom = num(cur["wind_direction_10m"]) ?? p.windFrom
         if let d = json["daily"] as? [String: Any] {
             out.high = num((d["temperature_2m_max"] as? [Any])?.first) ?? p.high
             out.low = num((d["temperature_2m_min"] as? [Any])?.first) ?? p.low
